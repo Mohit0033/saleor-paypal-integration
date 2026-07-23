@@ -45,6 +45,26 @@ export default createManifestHandler({
             },
           },
         },
+        {
+          url: iframeBaseUrl + "/product-launch-widget",
+          permissions: ["MANAGE_PRODUCTS"],
+          mount: "PRODUCT_DETAILS_WIDGETS",
+          label: "Product launch",
+          target: "WIDGET",
+          options: {
+            widgetTarget: {
+              method: "GET",
+            },
+          },
+        },
+        {
+          url: iframeBaseUrl + "/product-launch-checklist",
+          identifier: "product-launch-checklist",
+          permissions: [],
+          mount: "PRODUCT_DETAILS_WIDGETS",
+          label: "Product launch checklist",
+          target: "POPUP",
+        },
       ]
 
     const saleorMajor = schemaVersion && schemaVersion[0];
@@ -69,6 +89,10 @@ export default createManifestHandler({
          * This can be removed
          */
         "MANAGE_ORDERS",
+        /**
+         * Required by the product launch widget to read product channel listings.
+         */
+        "MANAGE_PRODUCTS",
       ],
       id: "saleor.app",
       version: packageJson.version,
