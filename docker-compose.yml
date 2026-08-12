@@ -17,6 +17,8 @@ services:
       # Optional: Upstash Redis APL (uncomment if using instead of FileAPL)
       # - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
   # Cloudflare Tunnel (optional — remove if running tunnel on host)
+    volumes:
+      - ./auth-data:/app/.saleor-app-auth
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: saleor-razorpay-tunnel
