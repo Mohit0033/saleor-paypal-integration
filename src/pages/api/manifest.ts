@@ -1,124 +1,21 @@
 import { createManifestHandler } from "@saleor/app-sdk/handlers/next";
-import { AppExtension, AppManifest } from "@saleor/app-sdk/types";
+import { AppManifest } from "@saleor/app-sdk/types";
+import { transactionInitializeSessionWebhook } from "./webhooks/transaction-initialize-session";
+import { transactionProcessSessionWebhook } from "./webhooks/transaction-process-session";
 
-import packageJson from "@/package.json";
-
-import { orderCreatedWebhook } from "./webhooks/order-created";
-import { orderFilterShippingMethodsWebhook } from "./webhooks/order-filter-shipping-methods";
-
-/**
- * App SDK helps with the valid Saleor App Manifest creation. Read more:
- * https://github.com/saleor/saleor-app-sdk/blob/main/docs/api-handlers.md#manifest-handler-factory
- */
 export default createManifestHandler({
-  async manifestFactory({ appBaseUrl, request, schemaVersion }) {
-    /**
-     * Allow to overwrite default app base url, to enable Docker support.
-     *
-     * See docs: https://docs.saleor.io/docs/3.x/developer/extending/apps/local-app-development
-     */
-    const iframeBaseUrl = process.env.APP_IFRAME_BASE_URL ?? appBaseUrl;
-    const apiBaseURL = process.env.APP_API_BASE_URL ?? appBaseUrl;
-
-    const extensionsForLatestSaleor: AppExtension[] = [
-        {
-          url: apiBaseURL + "/api/server-widget",
-          permissions: [],
-          mount: "PRODUCT_DETAILS_WIDGETS",
-          label: "Product Timestamps",
-          target: "WIDGET",
-          options: {
-            widgetTarget: {
-              method: "POST",
-            },
-          },
-        },
-        {
-          url: iframeBaseUrl+"/client-widget",
-          permissions: [],
-          mount: "ORDER_DETAILS_WIDGETS",
-          label: "Order widget example",
-          target: "WIDGET",
-          options: {
-            widgetTarget: {
-              method: "GET",
-            },
-          },
-        },
-        {
-          url: iframeBaseUrl + "/product-launch-widget",
-          permissions: ["MANAGE_PRODUCTS"],
-          mount: "PRODUCT_DETAILS_WIDGETS",
-          label: "Product launch",
-          target: "WIDGET",
-          options: {
-            widgetTarget: {
-              method: "GET",
-            },
-          },
-        },
-        {
-          url: iframeBaseUrl + "/product-launch-checklist",
-          identifier: "product-launch-checklist",
-          permissions: [],
-          mount: "PRODUCT_DETAILS_WIDGETS",
-          label: "Product launch checklist",
-          target: "POPUP",
-        },
-      ]
-
-    const saleorMajor = schemaVersion && schemaVersion[0];
-    const saleorMinor = schemaVersion && schemaVersion[1]
-
-    const isAbove3_21 = (saleorMajor ?? 0) >= 3 && (saleorMinor ?? 0) >= 22;
-
-    const extensions = isAbove3_21 ? extensionsForLatestSaleor : [];
-
+  async manifestFactory({ appBaseUrl }) {
     const manifest: AppManifest = {
-      name: "Saleor App Template",
-      tokenTargetUrl: `${apiBaseURL}/api/register`,
-      appUrl: iframeBaseUrl,
-      /**
-       * Set permissions for app if needed
-       * https://docs.saleor.io/docs/3.x/developer/permissions
-       */
-      permissions: [
-        /**
-         * Add permission to allow "ORDER_CREATED" / "ORDER_FILTER_SHIPPING_METHODS" webhooks registration.
-         *
-         * This can be removed
-         */
-        "MANAGE_ORDERS",
-        /**
-         * Required by the product launch widget to read product channel listings.
-         */
-        "MANAGE_PRODUCTS",
-      ],
-      id: "saleor.app",
-      version: packageJson.version,
-      /**
-       * Configure webhooks here. They will be created in Saleor during installation
-       * Read more
-       * https://docs.saleor.io/docs/3.x/developer/api-reference/webhooks/objects/webhook
-       *
-       * Easiest way to create webhook is to use app-sdk
-       * https://github.com/saleor/saleor-app-sdk/blob/main/docs/saleor-webhook.md
-       */
+      name: "Razorpay Payment App",
+      id: "saleor.app.razorpay",
+      version: "1.0.0",
+      appUrl: appBaseUrl,
+      tokenTargetUrl: `${appBaseUrl}/api/register`,
+      permissions: ["HANDLE_PAYMENTS"],
       webhooks: [
-        orderCreatedWebhook.getWebhookManifest(apiBaseURL),
-        orderFilterShippingMethodsWebhook.getWebhookManifest(apiBaseURL),
+        transactionInitializeSessionWebhook.getWebhookManifest(appBaseUrl),
+        transactionProcessSessionWebhook.getWebhookManifest(appBaseUrl),
       ],
-      /**
-       * Optionally, extend Dashboard with custom UIs
-       * https://docs.saleor.io/docs/3.x/developer/extending/apps/extending-dashboard-with-apps
-       */
-      extensions: extensions,
-      author: "Saleor Commerce",
-      brand: {
-        logo: {
-          default: `${apiBaseURL}/logo.png`,
-        },
-      },
     };
 
     return manifest;
