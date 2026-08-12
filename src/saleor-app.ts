@@ -1,27 +1,23 @@
-import { APL } from "@saleor/app-sdk/APL";
-import { SaleorApp } from "@saleor/app-sdk/saleor-app";
-import { FileAPL } from "@saleor/app-sdk/APL/file";
+// src/saleor-app.ts
+import { FileAPL } from "@saleor/app-sdk/APL";
 
-/**
- * By default auth data are stored in the `.auth-data.json` (FileAPL).
- * For multi-tenant applications and deployments please use UpstashAPL.
- *
- * To read more about storing auth data, read the
- * [APL documentation](https://github.com/saleor/saleor-app-sdk/blob/main/docs/apl.md)
- */
-export let apl: APL;
+let apl: any;
 
-switch (process.env.APL) {
-  /**
-   * Depending on env variables, chose what APL to use.
-   * To reduce the footprint, import only these needed
-   *
-   * TODO: See docs
-   */
-  default:
-    apl = new FileAPL();
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  try {
+    const { UpstashAPL } = require("@saleor/app-sdk/APL");
+    apl = new UpstashAPL({
+      restURL: process.env.UPSTASH_REDIS_REST_URL,
+      restToken: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    console.log("Using Upstash Redis APL");
+  } catch {
+    throw new Error("UpstashAPL not available. Run: pnpm add @saleor/app-sdk@latest");
+  }
+} else {
+  apl = new FileAPL();
+  console.log("Using FileAPL (local filesystem)");
 }
 
-export const saleorApp = new SaleorApp({
-  apl,
-});
+export { apl };
+export const saleorApp = { apl };
