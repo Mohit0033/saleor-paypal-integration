@@ -1,8 +1,10 @@
 import { SaleorSyncWebhook } from "@saleor/app-sdk/handlers/next";
 import { saleorApp } from "../../../saleor-app";
-import { TransactionInitializeSessionPayloadFragment } from "../../../../generated/graphql";
 import { gql } from "urql";
 import { razorpay } from "../../../lib/razorpay";
+
+// Fallback type if codegen hasn't run (e.g. Docker build)
+type TransactionInitializeSessionPayloadFragment = any;
 
 const TransactionInitializeSessionPayload = gql`
   fragment TransactionInitializeSessionPayload on TransactionInitializeSession {
@@ -48,10 +50,17 @@ export const transactionInitializeSessionWebhook =
 
 export default transactionInitializeSessionWebhook.createHandler(
   async (req, res, ctx) => {
-    const { payload } = ctx;
-    const { action, data, transaction } = payload;
+    const { payload, authData } = ctx;
+    const { action, transaction } = payload;
 
-    // ✅ 1. Validate action type — MOVED INSIDE THE HANDLER
+    // Allowlist guard — reject unauthorized Saleor instances
+    const ALLOWED_SALEOR_URL = process.env.ALLOWED_SALEOR_URL;
+    if (ALLOWED_SALEOR_URL && authData.saleorApiUrl !== ALLOWED_SALEOR_URL) {
+      console.error("Rejected unauthorized Saleor:", authData.saleorApiUrl);
+      return res.status(403).json({ error: "Unauthorized Saleor instance" });
+    }
+
+    // Validate action type
     if (action.actionType !== "CHARGE") {
       return res.status(200).json({
         result: "CHARGE_FAILURE",

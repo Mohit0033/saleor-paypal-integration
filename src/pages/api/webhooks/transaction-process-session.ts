@@ -1,8 +1,10 @@
 import { SaleorSyncWebhook } from "@saleor/app-sdk/handlers/next";
 import { saleorApp } from "../../../saleor-app";
-import { TransactionProcessSessionPayloadFragment } from "../../../../generated/graphql";
 import { gql } from "urql";
 import { razorpay, verifyPaymentSignature } from "../../../lib/razorpay";
+
+// Fallback type if codegen hasn't run (e.g. Docker build)
+type TransactionProcessSessionPayloadFragment = any;
 
 const TransactionProcessSessionPayload = gql`
   fragment TransactionProcessSessionPayload on TransactionProcessSession {
@@ -39,10 +41,17 @@ export const transactionProcessSessionWebhook =
 
 export default transactionProcessSessionWebhook.createHandler(
   async (req, res, ctx) => {
-    const { payload } = ctx;
+    const { payload, authData } = ctx;
     const { action, data, transaction } = payload;
 
-    // 1. Validate action type
+    // Allowlist guard — reject unauthorized Saleor instances
+    const ALLOWED_SALEOR_URL = process.env.ALLOWED_SALEOR_URL;
+    if (ALLOWED_SALEOR_URL && authData.saleorApiUrl !== ALLOWED_SALEOR_URL) {
+      console.error("Rejected unauthorized Saleor:", authData.saleorApiUrl);
+      return res.status(403).json({ error: "Unauthorized Saleor instance" });
+    }
+
+    // Validate action type
     if (action.actionType !== "CHARGE") {
       return res.status(200).json({
         result: "CHARGE_FAILURE",
@@ -53,10 +62,10 @@ export default transactionProcessSessionWebhook.createHandler(
     }
 
     try {
-      const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = 
+      const { razorpayPaymentId, razorpayOrderId, razorpaySignature } =
         (data as any) || {};
 
-      // 2. Validate input presence
+      // Validate input presence
       if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
         return res.status(200).json({
           result: "CHARGE_FAILURE",
@@ -66,7 +75,7 @@ export default transactionProcessSessionWebhook.createHandler(
         });
       }
 
-      // 3. Verify order ID matches the one we created
+      // Verify order ID matches the one we created
       if (razorpayOrderId !== transaction?.pspReference) {
         return res.status(200).json({
           result: "CHARGE_FAILURE",
@@ -76,7 +85,7 @@ export default transactionProcessSessionWebhook.createHandler(
         });
       }
 
-      // 4. Verify signature
+      // Verify signature
       const isValid = verifyPaymentSignature(
         razorpayOrderId,
         razorpayPaymentId,
@@ -92,7 +101,7 @@ export default transactionProcessSessionWebhook.createHandler(
         });
       }
 
-      // 5. Fetch and validate payment from Razorpay
+      // Fetch and validate payment from Razorpay
       const payment = await razorpay.payments.fetch(razorpayPaymentId);
 
       // Verify payment belongs to expected order
@@ -136,7 +145,7 @@ export default transactionProcessSessionWebhook.createHandler(
         });
       }
 
-      // ✅ All checks passed
+      // All checks passed
       return res.status(200).json({
         result: "CHARGE_SUCCESS",
         amount: action.amount,
