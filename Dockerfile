@@ -1,27 +1,22 @@
 # syntax=docker/dockerfile:1
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
-# Install pnpm
-RUN npm install -g pnpm
-
-# Set working directory
 WORKDIR /app
 
-# ---- Dependencies ----
 FROM base AS deps
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json ./
+# Added package-lock.json to ensure consistent dependencies
+COPY package-lock.json* ./
+# Added dedupe to fix the @urql/core TypeScript mismatch
+RUN npm install && npm dedupe
 
-# ---- Builder ----
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+RUN npm run build
 
-# ---- Runner ----
 FROM base AS runner
 WORKDIR /app
 
@@ -30,20 +25,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-# Copy necessary files
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# Create directory for FileAPL persistence
-RUN mkdir -p /app/.saleor-app-auth && chown nextjs:nodejs /app/.saleor-app-auth
-
-USER nextjs
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
-
 CMD ["node", "server.js"]
