@@ -102,7 +102,7 @@ https://pay.yourdomain.com/api/manifest
 
 ### Option B: Vercel (Serverless)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Mohit0033/saleor-razorpay-app)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Mohit0033/saleor-razorpay-integration)
 
 > **Note:** If using the default FileAPL, auth data won't persist across cold starts. Use [Upstash Redis](https://upstash.com) for production Vercel deployments.
 
