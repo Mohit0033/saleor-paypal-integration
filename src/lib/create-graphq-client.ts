@@ -34,6 +34,11 @@ export const createClient = (url: string, getAuth: AuthConfig<IAuthState>["getAu
                 headers: {
                   ...fetchOptions.headers,
                   "Authorization-Bearer": authState.token,
+                  // ---> ADD THESE TWO LINES <---
+                  ...(process.env.INTERNAL_API_SECRET && {
+                    "X-Internal-Auth": process.env.INTERNAL_API_SECRET,
+                  }),
+                  // --------------------------------
                 },
               },
             },
