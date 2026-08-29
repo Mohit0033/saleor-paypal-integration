@@ -1,7 +1,7 @@
 import { SaleorSyncWebhook } from "@saleor/app-sdk/handlers/next";
 import { saleorApp } from "../../../saleor-app";
 import { gql } from "urql";
-import { razorpay, verifyPaymentSignature } from "../../../lib/razorpay";
+import { captureOrder, PayPalError } from "../../../lib/paypal";
 
 type TransactionProcessSessionPayloadFragment = any;
 
@@ -31,7 +31,7 @@ const TransactionProcessSessionSubscription = gql`
 
 export const transactionProcessSessionWebhook =
   new SaleorSyncWebhook<TransactionProcessSessionPayloadFragment>({
-    name: "Razorpay Transaction Process",
+    name: "PayPal Transaction Process",
     webhookPath: "/api/webhooks/transaction-process-session",
     event: "TRANSACTION_PROCESS_SESSION",
     apl: saleorApp.apl,
@@ -43,153 +43,136 @@ export default transactionProcessSessionWebhook.createHandler(
     const { payload, authData } = ctx;
     const { action, data, transaction } = payload;
 
-    console.log("=== WEBHOOK HIT ===");
-    console.log("Event:", ctx.event);
-    console.log("Saleor URL:", authData.saleorApiUrl);
-    console.log("Payload action:", action);
-    console.log("Payload data:", JSON.stringify(data));
-    console.log("Transaction PSP Ref:", transaction?.pspReference);
+    console.log("=== PROCESS WEBHOOK HIT ===");
+    console.log("Action:", action.amount, action.currency, action.actionType);
+    console.log("PSP Ref:", transaction?.pspReference);
 
     if (action.actionType !== "CHARGE") {
       console.log("ACTION TYPE REJECTED:", action.actionType);
       return res.status(200).json({
         result: "CHARGE_FAILURE",
-        amount: action.amount,
+        amount: String(action.amount),
+        currency: action.currency,
         pspReference: transaction?.pspReference || "unknown",
         message: "Only CHARGE strategy supported",
       });
     }
 
     try {
-      const { razorpayPaymentId, razorpayOrderId, razorpaySignature } =
-        (data as any) || {};
+      const { paypalOrderId } = (data as any) || {};
 
-      console.log("Received from frontend:", { razorpayPaymentId, razorpayOrderId, razorpaySignature: razorpaySignature ? "present" : "missing" });
-
-      if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
-        console.log("MISSING CREDENTIALS");
+      if (!paypalOrderId) {
+        console.log("MISSING PAYPAL ORDER ID");
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
+          amount: String(action.amount),
+          currency: action.currency,
           pspReference: transaction?.pspReference || `fail_${Date.now()}`,
-          message: "Missing Razorpay payment credentials",
+          message: "Missing PayPal order ID",
         });
       }
 
-      console.log("Comparing order IDs:", { received: razorpayOrderId, expected: transaction?.pspReference });
-      if (razorpayOrderId !== transaction?.pspReference) {
+      if (transaction?.pspReference && paypalOrderId !== transaction.pspReference) {
         console.log("ORDER ID MISMATCH");
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || "unknown",
-          message: "Razorpay order ID does not match transaction",
+          amount: String(action.amount),
+          currency: action.currency,
+          pspReference: transaction.pspReference,
+          message: "PayPal order ID does not match transaction",
         });
       }
 
-      console.log("Verifying signature...");
-      const isValid = verifyPaymentSignature(
-        razorpayOrderId,
-        razorpayPaymentId,
-        razorpaySignature
-      );
+      console.log("Capturing PayPal order:", paypalOrderId);
+      const capture = await captureOrder(paypalOrderId);
+      console.log("Capture status:", capture.status);
 
-      if (!isValid) {
-        console.log("SIGNATURE INVALID");
+      if (capture.status !== "COMPLETED") {
+        console.log("STATUS NOT COMPLETED:", capture.status);
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || razorpayOrderId,
-          message: "Payment signature verification failed",
+          amount: String(action.amount),
+          currency: action.currency,
+          pspReference: paypalOrderId,
+          message: `PayPal payment not completed. Status: ${capture.status}`,
         });
       }
 
-      // Fetch payment from Razorpay
-      console.log("Fetching payment from Razorpay:", razorpayPaymentId);
-      const payment = await razorpay.payments.fetch(razorpayPaymentId);
-      console.log("Razorpay payment:", { status: payment.status, amount: payment.amount, currency: payment.currency, order_id: payment.order_id });
+      // PayPal returns snake_case keys
+      const capturePayment =
+        capture.purchase_units?.[0]?.payments?.captures?.[0];
 
-      // Verify payment belongs to expected order
-      if (payment.order_id !== razorpayOrderId) {
-        console.log("PAYMENT ORDER MISMATCH:", { paymentOrderId: payment.order_id, expected: razorpayOrderId });
+      if (!capturePayment) {
+        console.log("NO CAPTURE DETAILS — full response:", JSON.stringify(capture, null, 2));
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || razorpayOrderId,
-          message: "Payment order mismatch",
+          amount: String(action.amount),
+          currency: action.currency,
+          pspReference: paypalOrderId,
+          message: "No capture details in PayPal response",
         });
       }
 
-      // Fetch the order WE created to verify amount (not payment amount, which may include fees)
-      console.log("Fetching Razorpay order:", razorpayOrderId);
-      const order = await razorpay.orders.fetch(razorpayOrderId);
-      console.log("Razorpay order:", { amount: order.amount, currency: order.currency });
+      console.log("Capture details:", {
+        captureId: capturePayment.id,
+        capturedAmount: capturePayment.amount.value,
+        capturedCurrency: capturePayment.amount.currency_code,
+      });
 
-      const expectedAmount = Math.round(action.amount * 100);
-      console.log("Amount check:", { expected: expectedAmount, orderAmount: order.amount });
-
-      if (Number(order.amount) !== expectedAmount) {
-        console.log("AMOUNT MISMATCH — Order amount doesn't match Saleor transaction");
+      // Verify amount
+      if (Math.abs(parseFloat(capturePayment.amount.value) - parseFloat(String(action.amount))) > 0.01) {
+        console.log("AMOUNT MISMATCH");
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || razorpayOrderId,
+          amount: String(action.amount),
+          currency: action.currency,
+          pspReference: paypalOrderId,
           message: "Payment amount mismatch",
         });
       }
 
-      // Also log if payment amount differs from order amount (fees, etc.)
-      if (Number(payment.amount) !== Number(order.amount)) {
-        console.log("NOTE: Payment amount differs from order amount (likely fees):", {
-          orderAmount: order.amount,
-          paymentAmount: payment.amount,
-          difference: Number(payment.amount) - Number(order.amount)
-        });
-      }
-
-      // Verify currency matches
-      console.log("Currency check:", { expected: action.currency, received: payment.currency });
-      if (payment.currency.toUpperCase() !== action.currency.toUpperCase()) {
+      // Verify currency
+      if (
+        capturePayment.amount.currency_code.toUpperCase() !==
+        action.currency.toUpperCase()
+      ) {
         console.log("CURRENCY MISMATCH");
         return res.status(200).json({
           result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || razorpayOrderId,
+          amount: String(action.amount),
+          currency: action.currency,
+          pspReference: paypalOrderId,
           message: "Payment currency mismatch",
         });
       }
 
-      // Verify payment status
-      console.log("Payment status:", payment.status);
-      if (payment.status !== "captured" && payment.status !== "authorized") {
-        console.log("STATUS NOT CAPTURED:", payment.status);
-        return res.status(200).json({
-          result: "CHARGE_FAILURE",
-          amount: action.amount,
-          pspReference: transaction?.pspReference || razorpayOrderId,
-          message: `Payment status: ${payment.status}`,
-        });
-      }
-
-      console.log("✅ ALL CHECKS PASSED — CHARGE_SUCCESS");
+      console.log("✅ CHARGE_SUCCESS —", capturePayment.amount.value, capturePayment.amount.currency_code);
       return res.status(200).json({
         result: "CHARGE_SUCCESS",
-        amount: action.amount,
-        pspReference: transaction?.pspReference || razorpayOrderId,
+        amount: capturePayment.amount.value,
+        currency: capturePayment.amount.currency_code,
+        pspReference: paypalOrderId,
         data: {
-          razorpayPaymentId,
-          razorpayOrderId,
-          paymentMethod: payment.method,
-          capturedAt: payment.created_at,
+          paypalCaptureId: capturePayment.id,
+          paypalOrderId: paypalOrderId,
+          paypalStatus: capture.status,
+          capturedAt: new Date().toISOString(),
         },
       });
     } catch (error) {
-      console.error("❌ Razorpay processing failed:", error);
+      console.error("❌ PayPal processing failed:", error);
+
+      const message =
+        error instanceof PayPalError
+          ? `PayPal: ${error.message}`
+          : "Internal processing error";
+
       return res.status(200).json({
         result: "CHARGE_FAILURE",
-        amount: action.amount,
+        amount: String(action.amount),
+        currency: action.currency,
         pspReference: transaction?.pspReference || `fail_${Date.now()}`,
-        message: "Internal processing error",
+        message,
       });
     }
   }

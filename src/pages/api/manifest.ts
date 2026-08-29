@@ -6,8 +6,8 @@ import { transactionProcessSessionWebhook } from "./webhooks/transaction-process
 export default createManifestHandler({
   async manifestFactory({ appBaseUrl }) {
     const manifest: AppManifest = {
-      name: process.env.APP_NAME || "Razorpay Payment App",
-      id: process.env.APP_IDENTIFIER || "saleor.app.razorpay",
+      name: process.env.APP_NAME || "PayPal Payment App",
+      id: process.env.APP_IDENTIFIER || "saleor.app.paypal",
       version: process.env.APP_VERSION || "1.0.0",
       appUrl: appBaseUrl,
       tokenTargetUrl: `${appBaseUrl}/api/register`,
